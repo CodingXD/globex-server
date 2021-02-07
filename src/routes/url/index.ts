@@ -6,9 +6,20 @@
  */
 
 // Dependencies
+import { PoolClient } from "pg";
 import { FastifyInstance, FastifyPluginOptions } from "fastify";
+import {
+  JsonWebTokenError,
+  NotBeforeError,
+  TokenExpiredError,
+  verify,
+} from "jsonwebtoken";
+import SQL from "sql-template-strings";
 const req = require("request");
 const wordCount = require("html-word-count");
+
+// Constants
+let client: PoolClient;
 
 export default async function (
   fastify: FastifyInstance,
@@ -18,13 +29,22 @@ export default async function (
   // Method: POST
   // Description: Add a new url to database and return the wordcount
   // Requirements:
-  //  - Body: Url, User ID
+  //  - Headers: Authorization
+  //  - Body: Url
   // Response:
-  //  - 201: Word counts
+  //  - 201: Success, Word counts
   fastify.post(
     "/add",
     {
       schema: {
+        headers: {
+          type: "object",
+          properties: {
+            Authorization: { type: "string", minLength: 8 },
+          },
+          required: ["Authorization"],
+          additionalProperties: false,
+        },
         body: {
           type: "object",
           properties: {
@@ -45,61 +65,83 @@ export default async function (
       },
     },
     async function (request, reply) {
-      const { url, userId }: any = request.body;
-      req(url, async function (error, response, body) {
-        if (error) {
-          return reply.code(500).send({ error });
-        }
+      const { authorization }: any = request.headers;
+      const token = authorization.slice(7);
 
-        try {
-          const wc = wordCount(body);
-          const snapshot = await fastify.db
-            .firestore()
-            .collection("webpages")
-            .where("userId", "==", userId)
-            .where("url", "==", url)
-            .get();
-          if (snapshot.empty) {
-            console.log("No matching documents.");
-            await fastify.db
-              .firestore()
-              .collection("webpages")
-              .add({
-                url,
-                userId,
-                wordCount: wc,
-                favorite: false,
-              })
-              .then(() => reply.code(201).send({ wordCount: wc }));
-          } else {
-            return reply.code(400).send({ error: "Webpage already counted" });
+      verify(
+        token,
+        process.env.TOKEN_SECRET as string,
+        async function (
+          err: JsonWebTokenError | NotBeforeError | TokenExpiredError | null,
+          decoded: any
+        ) {
+          if (err) {
+            return reply.code(401).send({
+              success: false,
+              error: err,
+            });
           }
-        } catch (error) {
-          console.error(error);
-          return reply.code(500).send({ error });
+
+          try {
+            const { url }: any = request.body;
+            client = await fastify.pg.connect();
+            const { rowCount } = await client.query(
+              SQL`SELECT id FROM webpages WHERE user_id = ${decoded.id} AND url = ${url}`
+            );
+
+            if (rowCount == 0) {
+              req(url, async function (error, response, body) {
+                if (error) {
+                  client.release();
+                  return reply.code(500).send({ success: false, error });
+                }
+                const wc = wordCount(body);
+                await client.query(
+                  SQL`INSERT INTO webpages (url, wordcount, user_id) VALUES (${url}, ${wc}, ${decoded.id}})`
+                );
+                client.release();
+                return reply.code(201).send({ success: true, wordCount: wc });
+              });
+            } else {
+              client.release();
+              return reply
+                .code(400)
+                .send({ success: false, error: "Webpage already counted" });
+            }
+          } catch (error) {
+            client.release();
+            return reply.code(500).send({ success: false, error });
+          }
         }
-      });
+      );
     }
   );
 
   // List URL's
   // Method: GET
-  // Description: Authenticates a user via firebase
+  // Description: Returns the url history
   // Requirements:
-  //  - Query: User ID
+  //  - Headers: Authorization
   // Response:
   //  - 200: URL's
   fastify.get(
     "/list",
     {
       schema: {
+        headers: {
+          type: "object",
+          properties: {
+            Authorization: { type: "string", minLength: 8 },
+          },
+          required: ["Authorization"],
+          additionalProperties: false,
+        },
         querystring: {
           type: "object",
           properties: {
-            userId: { type: "string", minLength: 1 },
             limit: { type: "integer", minimum: 1 },
+            offset: { type: "integer", minimum: 1 },
           },
-          required: ["userId"],
           additionalProperties: false,
         },
         response: {
@@ -118,53 +160,53 @@ export default async function (
                   },
                 },
               },
-              last: {
-                type: "object",
-                properties: {
-                  url: { type: "string" },
-                  wordCount: { type: "integer" },
-                  id: { type: "string" },
-                  favorite: { type: "boolean" },
-                },
-              },
             },
           },
         },
       },
     },
     async function (request, reply) {
-      const { userId, limit = 10 }: any = request.query;
+      const { authorization }: any = request.headers;
+      const token = authorization.slice(7);
 
-      const snapshot = await fastify.db
-        .firestore()
-        .collection("webpages")
-        .where("userId", "==", userId)
-        .orderBy("wordCount", "desc")
-        .limit(limit)
-        .get();
-      if (snapshot.empty) {
-        console.log("No matching documents.");
-        return reply.code(200).send({ urls: [] });
-      }
+      verify(
+        token,
+        process.env.TOKEN_SECRET as string,
+        async function (
+          err: JsonWebTokenError | NotBeforeError | TokenExpiredError | null,
+          decoded: any
+        ) {
+          if (err) {
+            return reply.code(401).send({
+              success: false,
+              error: err,
+            });
+          }
 
-      const urls: object[] = [];
-
-      snapshot.forEach((doc) => {
-        urls.push({
-          id: doc.id,
-          url: doc.data().url,
-          wordCount: doc.data().wordCount,
-          favorite: doc.data().favorite,
-        });
-      });
-
-      return reply.code(200).send({
-        urls,
-        last: {
-          id: snapshot.docs[snapshot.docs.length - 1].id,
-          ...snapshot.docs[snapshot.docs.length - 1].data(),
-        },
-      });
+          try {
+            client = await fastify.pg.connect();
+            const { rowCount } = await client.query(
+              SQL`SELECT id FROM users WHERE id = ${decoded.id}`
+            );
+            if (rowCount == 0) {
+              client.release();
+              return reply
+                .code(401)
+                .send({ success: false, error: "Unauthorized" });
+            } else {
+              const { limit = 10 }: any = request.query;
+              const { rows } = await client.query(
+                SQL`SELECT id, url, wordCount, favorite FROM webpages WHERE user_id = ${decoded.id} ORDER BY id DESC LIMIT ${limit}`
+              );
+              client.release();
+              return reply.code(200).send({ success: true, urls: rows });
+            }
+          } catch (error) {
+            client.release();
+            return reply.code(500).send({ success: false, error });
+          }
+        }
+      );
     }
   );
 
@@ -179,13 +221,21 @@ export default async function (
     "/favorite/change",
     {
       schema: {
+        headers: {
+          type: "object",
+          properties: {
+            Authorization: { type: "string", minLength: 8 },
+          },
+          required: ["Authorization"],
+          additionalProperties: false,
+        },
         body: {
           type: "object",
           properties: {
-            id: { type: "string", minLength: 1 },
+            url_id: { type: "string", minLength: 1 },
             isFavorite: { type: "boolean" },
           },
-          required: ["id", "isFavorite"],
+          required: ["url_id", "isFavorite"],
           additionalProperties: false,
         },
         response: {
@@ -199,14 +249,48 @@ export default async function (
       },
     },
     async function (request, reply) {
-      const { id, isFavorite }: any = request.body;
-      fastify.db
-        .firestore()
-        .collection("webpages")
-        .doc(id)
-        .update({ favorite: isFavorite })
-        .then(() => reply.code(200).send({ success: true }))
-        .catch((err) => reply.code(500).send({ error: err }));
+      const { authorization }: any = request.headers;
+      const token = authorization.slice(7);
+
+      verify(
+        token,
+        process.env.TOKEN_SECRET as string,
+        async function (
+          err: JsonWebTokenError | NotBeforeError | TokenExpiredError | null,
+          decoded: any
+        ) {
+          if (err) {
+            return reply.code(401).send({
+              success: false,
+              error: err,
+            });
+          }
+
+          try {
+            client = await fastify.pg.connect();
+            const { rowCount } = await client.query(
+              SQL`SELECT id FROM users WHERE id = ${decoded.id}`
+            );
+
+            if (rowCount == 0) {
+              client.release();
+              return reply
+                .code(401)
+                .send({ success: false, error: "Unauthorized" });
+            } else {
+              const { isFavorite, url_id }: any = request.body;
+              await client.query(
+                SQL`UPDATE TABLE webpages SET favorite = ${isFavorite} WHERE user_id = ${decoded.id} AND id = ${url_id}`
+              );
+              client.release();
+              return reply.code(200).send({ success: true });
+            }
+          } catch (error) {
+            client.release();
+            return reply.code(500).send({ success: false, error: err });
+          }
+        }
+      );
     }
   );
 
@@ -221,6 +305,14 @@ export default async function (
     "/delete",
     {
       schema: {
+        headers: {
+          type: "object",
+          properties: {
+            Authorization: { type: "string", minLength: 8 },
+          },
+          required: ["Authorization"],
+          additionalProperties: false,
+        },
         querystring: {
           type: "object",
           properties: {
@@ -240,14 +332,48 @@ export default async function (
       },
     },
     async function (request, reply) {
-      const { id }: any = request.query;
-      fastify.db
-        .firestore()
-        .collection("webpages")
-        .doc(id)
-        .delete()
-        .then(() => reply.code(200).send({ success: true }))
-        .catch((err) => reply.code(500).send({ error: err }));
+      const { authorization }: any = request.headers;
+      const token = authorization.slice(7);
+
+      verify(
+        token,
+        process.env.TOKEN_SECRET as string,
+        async function (
+          err: JsonWebTokenError | NotBeforeError | TokenExpiredError | null,
+          decoded: any
+        ) {
+          if (err) {
+            return reply.code(401).send({
+              success: false,
+              error: err,
+            });
+          }
+
+          try {
+            client = await fastify.pg.connect();
+            const { rowCount } = await client.query(
+              SQL`SELECT id FROM users WHERE id = ${decoded.id}`
+            );
+
+            if (rowCount == 0) {
+              client.release();
+              return reply
+                .code(401)
+                .send({ success: false, error: "Unauthorized" });
+            } else {
+              const { id }: any = request.query;
+              await client.query(
+                SQL`DELETE FROM webpages WHERE user_id = ${decoded.id} AND id = ${id}`
+              );
+              client.release();
+              return reply.code(200).send({ success: true });
+            }
+          } catch (error) {
+            client.release();
+            return reply.code(500).send({ success: false, error: err });
+          }
+        }
+      );
     }
   );
 }
