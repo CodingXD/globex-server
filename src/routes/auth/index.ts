@@ -7,7 +7,7 @@
 import { PoolClient } from "pg";
 import { FastifyInstance, FastifyPluginOptions } from "fastify";
 import SQL from "sql-template-strings";
-import bcrypt from "bcrypt";
+import * as bcrypt from "bcrypt";
 import { sign } from "jsonwebtoken";
 
 // Constants
@@ -42,9 +42,15 @@ export default async function (
           200: {
             type: "object",
             properties: {
-              success: { type: "integer" },
+              success: { type: "boolean" },
               token: { type: "string" },
-              user: { type: "string" },
+              user: {
+                type: "object",
+                properties: {
+                  email: { type: "string" },
+                  displayName: { type: "string" },
+                },
+              },
             },
           },
         },
@@ -94,7 +100,7 @@ export default async function (
                 );
 
                 const user = {
-                  email: rows[0].email,
+                  email,
                   displayName: rows[0].displayName,
                 };
 
@@ -150,9 +156,15 @@ export default async function (
           201: {
             type: "object",
             properties: {
-              success: { type: "integer" },
+              success: { type: "boolean" },
               token: { type: "string" },
-              user: { type: "string" },
+              user: {
+                type: "object",
+                properties: {
+                  email: { type: "string" },
+                  displayName: { type: "string" },
+                },
+              },
             },
           },
         },
@@ -223,6 +235,7 @@ export default async function (
           });
         }
       } catch (error) {
+        console.log(error);
         client.release();
         return reply.code(500).send({ success: false, error });
       }

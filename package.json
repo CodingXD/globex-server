@@ -23,7 +23,6 @@
     "fastify-cookie": "^5.1.0",
     "fastify-cors": "^5.2.0",
     "fastify-plugin": "^3.0.0",
-    "firebase-admin": "^9.4.2",
     "html-word-count": "^2.0.0",
     "jsonwebtoken": "^8.5.1",
     "pg": "^8.5.1",
@@ -31,6 +30,7 @@
     "sql-template-strings": "^2.2.2"
   },
   "devDependencies": {
+    "@types/bcrypt": "^3.0.0",
     "@types/jsonwebtoken": "^8.5.0",
     "@types/node": "^14.14.25",
     "@types/pg": "^7.14.9",

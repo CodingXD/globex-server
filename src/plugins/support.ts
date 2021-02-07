@@ -1,7 +1,6 @@
 import fp from "fastify-plugin";
 import { FastifyInstance, FastifyPluginOptions } from "fastify";
 import fastifyCors from "fastify-cors";
-import * as admin from "firebase-admin";
 import fastifyCookie from "fastify-cookie";
 import { Pool } from "pg";
 import * as Pg from "pg";
@@ -16,24 +15,13 @@ export default fp(async function (
   fastify.register(fastifyCors, {
     origin: process.env.ORIGIN,
     methods: ["GET", "POST", "DELETE", "PUT"],
-    allowedHeaders: ["token", "Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   });
 
   // Initialize Cookies
   fastify.register(fastifyCookie, {
     secret: process.env.COOKIE_SECRET,
   });
-
-  // Firebase
-  admin.initializeApp({
-    credential: admin.credential.cert(
-      require("../../globex-f789c-firebase-adminsdk-64fhr-96a8c7a99e.json")
-    ),
-  });
-
-  if (!fastify.db) {
-    fastify.decorate("db", admin);
-  }
 
   fastify.decorate(
     "pg",
@@ -66,7 +54,6 @@ type PostgresDb = {
 
 declare module "fastify" {
   export interface FastifyInstance {
-    db: typeof admin;
     pg: PostgresDb & Record<string, PostgresDb>;
   }
 }
