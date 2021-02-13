@@ -2,8 +2,7 @@ import fp from "fastify-plugin";
 import { FastifyInstance, FastifyPluginOptions } from "fastify";
 import fastifyCors from "fastify-cors";
 import fastifyCookie from "fastify-cookie";
-import { Pool } from "pg";
-import * as Pg from "pg";
+import * as firebaseAdmin from "firebase-admin";
 
 // The plugins here are loaded first before
 // the routes are initialized
@@ -23,37 +22,20 @@ export default fp(async function (
     secret: process.env.COOKIE_SECRET,
   });
 
-  fastify.decorate(
-    "pg",
-    new Pool({
-      user: process.env.POSTGRES_USER,
-      host: process.env.POSTGRES_HOST,
-      database: process.env.POSTGRES_DATABASE,
-      password: process.env.POSTGRES_PASSWORD,
-      port: process.env.POSTGRES_PORT as any,
-    })
-  );
+  // Connect to firebase
+  if (!firebaseAdmin.apps.length) {
+    firebaseAdmin.initializeApp({
+      credential: firebaseAdmin.credential.cert(
+        require("../../globex-f789c-firebase-adminsdk-64fhr-33eda730ef.json")
+      ),
+    });
+  }
+
+  fastify.decorate("firebase", firebaseAdmin);
 });
-
-declare function transact<TResult>(
-  fn: (client: Pg.PoolClient) => Promise<TResult>
-): Promise<TResult>;
-
-declare function transact<TResult>(
-  fn: (client: Pg.PoolClient) => Promise<TResult>,
-  cb: (error: Error | null, result?: TResult) => void
-): void;
-
-type PostgresDb = {
-  pool: Pg.Pool;
-  Client: Pg.Client;
-  query: Pg.Pool["query"];
-  connect: Pg.Pool["connect"];
-  transact: typeof transact;
-};
 
 declare module "fastify" {
   export interface FastifyInstance {
-    pg: PostgresDb & Record<string, PostgresDb>;
+    firebase: typeof firebaseAdmin;
   }
 }

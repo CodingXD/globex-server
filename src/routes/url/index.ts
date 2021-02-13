@@ -6,7 +6,6 @@
  */
 
 // Dependencies
-import { PoolClient } from "pg";
 import { FastifyInstance, FastifyPluginOptions } from "fastify";
 import {
   JsonWebTokenError,
@@ -14,12 +13,8 @@ import {
   TokenExpiredError,
   verify,
 } from "jsonwebtoken";
-import SQL from "sql-template-strings";
-const req = require("request");
-const wordCount = require("html-word-count");
-
-// Constants
-let client: PoolClient;
+// const req = require("request");
+// const wordCount = require("html-word-count");
 
 export default async function (
   fastify: FastifyInstance,
@@ -65,55 +60,56 @@ export default async function (
       },
     },
     async function (request, reply) {
-      const { authorization }: any = request.headers;
-      const token = authorization.slice(7);
+      reply.code(201).send(true);
+      // const { authorization }: any = request.headers;
+      // const token = authorization.slice(7);
 
-      verify(
-        token,
-        process.env.TOKEN_SECRET as string,
-        async function (
-          err: JsonWebTokenError | NotBeforeError | TokenExpiredError | null,
-          decoded: any
-        ) {
-          if (err) {
-            return reply.code(401).send({
-              success: false,
-              error: err,
-            });
-          }
+      // verify(
+      //   token,
+      //   process.env.TOKEN_SECRET as string,
+      //   async function (
+      //     err: JsonWebTokenError | NotBeforeError | TokenExpiredError | null,
+      //     decoded: any
+      //   ) {
+      //     if (err) {
+      //       return reply.code(401).send({
+      //         success: false,
+      //         error: err,
+      //       });
+      //     }
 
-          try {
-            const { url }: any = request.body;
-            client = await fastify.pg.connect();
-            const { rowCount } = await client.query(
-              SQL`SELECT id FROM webpages WHERE user_id = ${decoded.id} AND url = ${url}`
-            );
+      //     try {
+      //       const { url }: any = request.body;
+      //       client = await fastify.pg.connect();
+      //       const { rowCount } = await client.query(
+      //         SQL`SELECT id FROM webpages WHERE user_id = ${decoded.id} AND url = ${url}`
+      //       );
 
-            if (rowCount == 0) {
-              req(url, async function (error, response, body) {
-                if (error) {
-                  client.release();
-                  return reply.code(500).send({ success: false, error });
-                }
-                const wc = wordCount(body);
-                await client.query(
-                  SQL`INSERT INTO webpages (url, wordcount, user_id) VALUES (${url}, ${wc}, ${decoded.id}})`
-                );
-                client.release();
-                return reply.code(201).send({ success: true, wordCount: wc });
-              });
-            } else {
-              client.release();
-              return reply
-                .code(400)
-                .send({ success: false, error: "Webpage already counted" });
-            }
-          } catch (error) {
-            client.release();
-            return reply.code(500).send({ success: false, error });
-          }
-        }
-      );
+      //       if (rowCount == 0) {
+      //         req(url, async function (error, response, body) {
+      //           if (error) {
+      //             client.release();
+      //             return reply.code(500).send({ success: false, error });
+      //           }
+      //           const wc = wordCount(body);
+      //           await client.query(
+      //             SQL`INSERT INTO webpages (url, wordcount, user_id) VALUES (${url}, ${wc}, ${decoded.id}})`
+      //           );
+      //           client.release();
+      //           return reply.code(201).send({ success: true, wordCount: wc });
+      //         });
+      //       } else {
+      //         client.release();
+      //         return reply
+      //           .code(400)
+      //           .send({ success: false, error: "Webpage already counted" });
+      //       }
+      //     } catch (error) {
+      //       client.release();
+      //       return reply.code(500).send({ success: false, error });
+      //     }
+      //   }
+      // );
     }
   );
 
@@ -169,44 +165,34 @@ export default async function (
       const { authorization }: any = request.headers;
       const token = authorization.slice(7);
 
-      verify(
-        token,
-        process.env.TOKEN_SECRET as string,
-        async function (
-          err: JsonWebTokenError | NotBeforeError | TokenExpiredError | null,
-          decoded: any
-        ) {
-          if (err) {
-            return reply.code(401).send({
-              success: false,
-              error: err,
-            });
-          }
-
-          try {
-            client = await fastify.pg.connect();
-            const { rowCount } = await client.query(
-              SQL`SELECT id FROM users WHERE id = ${decoded.id}`
-            );
-            if (rowCount == 0) {
-              client.release();
-              return reply
-                .code(401)
-                .send({ success: false, error: "Unauthorized" });
-            } else {
-              const { limit = 10 }: any = request.query;
-              const { rows } = await client.query(
-                SQL`SELECT id, url, wordCount, favorite FROM webpages WHERE user_id = ${decoded.id} ORDER BY id DESC LIMIT ${limit}`
-              );
-              client.release();
-              return reply.code(200).send({ success: true, urls: rows });
-            }
-          } catch (error) {
-            client.release();
-            return reply.code(500).send({ success: false, error });
-          }
+      try {
+        const { uid } = await fastify.firebase.auth().verifyIdToken(token);
+        await fastify.firebase.auth().getUser(uid);
+        const snapshot = await fastify.firebase
+          .firestore()
+          .collection("webpages")
+          .where("uid", "==", uid)
+          .orderBy("url")
+          .limit(10)
+          .get();
+        if (snapshot.empty) {
+          return reply.code(200).send({ success: true, urls: [] });
+        } else {
+          const urls: any = [];
+          snapshot.forEach((doc) => {
+            urls.push({ id: doc.id, ...doc.data() });
+          });
+          return reply.code(200).send({ success: true, urls });
         }
-      );
+      } catch (error) {
+        if (error.code == "auth/user-not-found") {
+          return reply
+            .code(401)
+            .send({ success: false, error: "Unauthorized" });
+        } else {
+          return reply.code(500).send({ success: false, error });
+        }
+      }
     }
   );
 
@@ -266,29 +252,33 @@ export default async function (
             });
           }
 
-          try {
-            client = await fastify.pg.connect();
-            const { rowCount } = await client.query(
-              SQL`SELECT id FROM users WHERE id = ${decoded.id}`
-            );
+          return reply.code(200).send({
+            success: true,
+          });
 
-            if (rowCount == 0) {
-              client.release();
-              return reply
-                .code(401)
-                .send({ success: false, error: "Unauthorized" });
-            } else {
-              const { isFavorite, url_id }: any = request.body;
-              await client.query(
-                SQL`UPDATE TABLE webpages SET favorite = ${isFavorite} WHERE user_id = ${decoded.id} AND id = ${url_id}`
-              );
-              client.release();
-              return reply.code(200).send({ success: true });
-            }
-          } catch (error) {
-            client.release();
-            return reply.code(500).send({ success: false, error: err });
-          }
+          // try {
+          //   client = await fastify.pg.connect();
+          //   const { rowCount } = await client.query(
+          //     SQL`SELECT id FROM users WHERE id = ${decoded.id}`
+          //   );
+
+          //   if (rowCount == 0) {
+          //     client.release();
+          //     return reply
+          //       .code(401)
+          //       .send({ success: false, error: "Unauthorized" });
+          //   } else {
+          //     const { isFavorite, url_id }: any = request.body;
+          //     await client.query(
+          //       SQL`UPDATE TABLE webpages SET favorite = ${isFavorite} WHERE user_id = ${decoded.id} AND id = ${url_id}`
+          //     );
+          //     client.release();
+          //     return reply.code(200).send({ success: true });
+          //   }
+          // } catch (error) {
+          //   client.release();
+          //   return reply.code(500).send({ success: false, error: err });
+          // }
         }
       );
     }
@@ -349,29 +339,33 @@ export default async function (
             });
           }
 
-          try {
-            client = await fastify.pg.connect();
-            const { rowCount } = await client.query(
-              SQL`SELECT id FROM users WHERE id = ${decoded.id}`
-            );
+          return reply.code(200).send({
+            success: true,
+          });
 
-            if (rowCount == 0) {
-              client.release();
-              return reply
-                .code(401)
-                .send({ success: false, error: "Unauthorized" });
-            } else {
-              const { id }: any = request.query;
-              await client.query(
-                SQL`DELETE FROM webpages WHERE user_id = ${decoded.id} AND id = ${id}`
-              );
-              client.release();
-              return reply.code(200).send({ success: true });
-            }
-          } catch (error) {
-            client.release();
-            return reply.code(500).send({ success: false, error: err });
-          }
+          // try {
+          //   client = await fastify.pg.connect();
+          //   const { rowCount } = await client.query(
+          //     SQL`SELECT id FROM users WHERE id = ${decoded.id}`
+          //   );
+
+          //   if (rowCount == 0) {
+          //     client.release();
+          //     return reply
+          //       .code(401)
+          //       .send({ success: false, error: "Unauthorized" });
+          //   } else {
+          //     const { id }: any = request.query;
+          //     await client.query(
+          //       SQL`DELETE FROM webpages WHERE user_id = ${decoded.id} AND id = ${id}`
+          //     );
+          //     client.release();
+          //     return reply.code(200).send({ success: true });
+          //   }
+          // } catch (error) {
+          //   client.release();
+          //   return reply.code(500).send({ success: false, error: err });
+          // }
         }
       );
     }
