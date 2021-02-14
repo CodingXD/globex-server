@@ -13,8 +13,8 @@ import {
   TokenExpiredError,
   verify,
 } from "jsonwebtoken";
-// const req = require("request");
-// const wordCount = require("html-word-count");
+const req = require("request");
+const wordCount = require("html-word-count");
 
 export default async function (
   fastify: FastifyInstance,
@@ -44,72 +44,79 @@ export default async function (
           type: "object",
           properties: {
             url: { type: "string", minLength: 1 },
-            userId: { type: "string", minLength: 1 },
           },
-          required: ["url", "userId"],
+          required: ["url"],
           additionalProperties: false,
         },
         response: {
           201: {
             type: "object",
             properties: {
-              wordCount: { type: "integer" },
+              success: { type: "boolean" },
+              url: {
+                type: "object",
+                properties: {
+                  domain: { type: "string" },
+                  url: { type: "string" },
+                  wordcount: { type: "integer" },
+                  favorite: { type: "boolean" },
+                },
+              },
             },
           },
         },
       },
     },
     async function (request, reply) {
-      reply.code(201).send(true);
-      // const { authorization }: any = request.headers;
-      // const token = authorization.slice(7);
+      const { authorization }: any = request.headers;
+      const token = authorization.slice(7);
 
-      // verify(
-      //   token,
-      //   process.env.TOKEN_SECRET as string,
-      //   async function (
-      //     err: JsonWebTokenError | NotBeforeError | TokenExpiredError | null,
-      //     decoded: any
-      //   ) {
-      //     if (err) {
-      //       return reply.code(401).send({
-      //         success: false,
-      //         error: err,
-      //       });
-      //     }
+      try {
+        const { uid } = await fastify.firebase.auth().verifyIdToken(token);
+        await fastify.firebase.auth().getUser(uid);
+        const { url }: any = request.body;
+        const snapshot = await fastify.firebase
+          .firestore()
+          .collection("webpages")
+          .where("user_id", "==", uid)
+          .where("url", "==", url)
+          .get();
+        if (snapshot.empty) {
+          req(url, async function (error, response, body) {
+            if (error) {
+              return reply.code(500).send({ success: false, error });
+            }
 
-      //     try {
-      //       const { url }: any = request.body;
-      //       client = await fastify.pg.connect();
-      //       const { rowCount } = await client.query(
-      //         SQL`SELECT id FROM webpages WHERE user_id = ${decoded.id} AND url = ${url}`
-      //       );
+            const URLParser = require("url");
+            const domain = URLParser.parse(url).hostname;
+            const wc = wordCount(body);
+            await fastify.firebase.firestore().collection("webpages").add({
+              user_id: uid,
+              domain,
+              url,
+              wordcount: wc,
+              favorite: false,
+            });
 
-      //       if (rowCount == 0) {
-      //         req(url, async function (error, response, body) {
-      //           if (error) {
-      //             client.release();
-      //             return reply.code(500).send({ success: false, error });
-      //           }
-      //           const wc = wordCount(body);
-      //           await client.query(
-      //             SQL`INSERT INTO webpages (url, wordcount, user_id) VALUES (${url}, ${wc}, ${decoded.id}})`
-      //           );
-      //           client.release();
-      //           return reply.code(201).send({ success: true, wordCount: wc });
-      //         });
-      //       } else {
-      //         client.release();
-      //         return reply
-      //           .code(400)
-      //           .send({ success: false, error: "Webpage already counted" });
-      //       }
-      //     } catch (error) {
-      //       client.release();
-      //       return reply.code(500).send({ success: false, error });
-      //     }
-      //   }
-      // );
+            return reply.code(201).send({
+              success: true,
+              url: {
+                domain,
+                url,
+                wordcount: wc,
+                favorite: false,
+              },
+            });
+          });
+        } else {
+          return reply
+            .code(400)
+            .send({ success: false, error: "Webpage already counted" });
+        }
+      } catch (error) {
+        console.log(error);
+        return reply.code(500).send({ success: false, error });
+      }
     }
   );
 
@@ -119,7 +126,7 @@ export default async function (
   // Requirements:
   //  - Headers: Authorization
   // Response:
-  //  - 200: URL's
+  //  - 200: Success, URL's
   fastify.get(
     "/list",
     {
@@ -135,15 +142,17 @@ export default async function (
         querystring: {
           type: "object",
           properties: {
+            domain: { type: "string" },
             limit: { type: "integer", minimum: 1 },
-            offset: { type: "integer", minimum: 1 },
           },
+          required: ["domain"],
           additionalProperties: false,
         },
         response: {
           200: {
             type: "object",
             properties: {
+              success: { type: "boolean" },
               urls: {
                 type: "array",
                 items: {
@@ -168,12 +177,15 @@ export default async function (
       try {
         const { uid } = await fastify.firebase.auth().verifyIdToken(token);
         await fastify.firebase.auth().getUser(uid);
+        const { domain = "", limit = 10 }: any = request.query;
+        console.log("Domain: ", domain);
         const snapshot = await fastify.firebase
           .firestore()
           .collection("webpages")
-          .where("uid", "==", uid)
+          .where("user_id", "==", uid)
+          .where("domain", "==", domain)
           .orderBy("url")
-          .limit(10)
+          .limit(limit)
           .get();
         if (snapshot.empty) {
           return reply.code(200).send({ success: true, urls: [] });

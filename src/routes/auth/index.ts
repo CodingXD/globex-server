@@ -51,6 +51,7 @@ export default async function (
       const { authorization }: any = request.headers;
       const token = authorization.slice(7);
       const { email }: any = request.body;
+
       if (
         email.match(/^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/) == null
       ) {
@@ -64,7 +65,7 @@ export default async function (
 
         const { uid }: any = requestToken;
         const userRecord = await fastify.firebase.auth().getUser(uid);
-        if (userRecord.email == email) {
+        if (userRecord.email?.toLowerCase() == email.toLowerCase()) {
           return reply.code(200).send({ success: true });
         } else {
           return reply
