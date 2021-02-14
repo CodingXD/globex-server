@@ -178,7 +178,6 @@ export default async function (
         const { uid } = await fastify.firebase.auth().verifyIdToken(token);
         await fastify.firebase.auth().getUser(uid);
         const { domain = "", limit = 10 }: any = request.query;
-        console.log("Domain: ", domain);
         const snapshot = await fastify.firebase
           .firestore()
           .collection("webpages")
@@ -202,6 +201,7 @@ export default async function (
             .code(401)
             .send({ success: false, error: "Unauthorized" });
         } else {
+          console.error(error);
           return reply.code(500).send({ success: false, error });
         }
       }
