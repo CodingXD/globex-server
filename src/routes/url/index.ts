@@ -7,12 +7,6 @@
 
 // Dependencies
 import { FastifyInstance, FastifyPluginOptions } from "fastify";
-import {
-  JsonWebTokenError,
-  NotBeforeError,
-  TokenExpiredError,
-  verify,
-} from "jsonwebtoken";
 const req = require("request");
 const wordCount = require("html-word-count");
 
@@ -208,10 +202,88 @@ export default async function (
     }
   );
 
+  // List Domain's
+  // Method: GET
+  // Description: Return list of domains
+  // Requirements:
+  //  - Headers: Authorization
+  // Response:
+  //  - 200: Success, Domain's
+  fastify.get(
+    "/list/domains",
+    {
+      schema: {
+        headers: {
+          type: "object",
+          properties: {
+            Authorization: { type: "string", minLength: 8 },
+          },
+          required: ["Authorization"],
+          additionalProperties: false,
+        },
+        querystring: {
+          type: "object",
+          properties: {
+            limit: { type: "integer", minimum: 1 },
+          },
+          additionalProperties: false,
+        },
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              success: { type: "boolean" },
+              domains: {
+                type: "array",
+                items: {
+                  type: "string",
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    async function (request, reply) {
+      const { authorization }: any = request.headers;
+      const token = authorization.slice(7);
+
+      try {
+        const { uid } = await fastify.firebase.auth().verifyIdToken(token);
+        await fastify.firebase.auth().getUser(uid);
+        const { limit = 10 }: any = request.query;
+        const snapshot = await fastify.firebase
+          .firestore()
+          .collection("webpages")
+          .where("user_id", "==", uid)
+          .orderBy("url")
+          .limit(limit)
+          .get();
+        if (snapshot.empty) {
+          return reply.code(200).send({ success: true, domains: [] });
+        } else {
+          const domains: any = [];
+          snapshot.forEach((doc) => domains.push(doc.data().domain));
+          return reply.code(200).send({ success: true, domains });
+        }
+      } catch (error) {
+        if (error.code == "auth/user-not-found") {
+          return reply
+            .code(401)
+            .send({ success: false, error: "Unauthorized" });
+        } else {
+          console.error(error);
+          return reply.code(500).send({ success: false, error });
+        }
+      }
+    }
+  );
+
   // Update Favorite
   // Method: PUT
   // Description: Changes a URL's Favorite status
   // Requirements:
+  //  - Header: Authorization
   //  - Body: Url ID, Favorite or not
   // Response:
   //  - 200: Success
@@ -250,49 +322,27 @@ export default async function (
       const { authorization }: any = request.headers;
       const token = authorization.slice(7);
 
-      verify(
-        token,
-        process.env.TOKEN_SECRET as string,
-        async function (
-          err: JsonWebTokenError | NotBeforeError | TokenExpiredError | null,
-          decoded: any
-        ) {
-          if (err) {
-            return reply.code(401).send({
-              success: false,
-              error: err,
-            });
-          }
+      try {
+        const { uid } = await fastify.firebase.auth().verifyIdToken(token);
+        await fastify.firebase.auth().getUser(uid);
 
-          return reply.code(200).send({
-            success: true,
-          });
-
-          // try {
-          //   client = await fastify.pg.connect();
-          //   const { rowCount } = await client.query(
-          //     SQL`SELECT id FROM users WHERE id = ${decoded.id}`
-          //   );
-
-          //   if (rowCount == 0) {
-          //     client.release();
-          //     return reply
-          //       .code(401)
-          //       .send({ success: false, error: "Unauthorized" });
-          //   } else {
-          //     const { isFavorite, url_id }: any = request.body;
-          //     await client.query(
-          //       SQL`UPDATE TABLE webpages SET favorite = ${isFavorite} WHERE user_id = ${decoded.id} AND id = ${url_id}`
-          //     );
-          //     client.release();
-          //     return reply.code(200).send({ success: true });
-          //   }
-          // } catch (error) {
-          //   client.release();
-          //   return reply.code(500).send({ success: false, error: err });
-          // }
+        const { url_id, isFavorite }: any = request.body;
+        await fastify.firebase
+          .firestore()
+          .collection("webpages")
+          .doc(url_id)
+          .update({ favorite: isFavorite });
+        return reply.code(200).send({ success: true });
+      } catch (error) {
+        if (error.code == "auth/user-not-found") {
+          return reply
+            .code(401)
+            .send({ success: false, error: "Unauthorized" });
+        } else {
+          console.error(error);
+          return reply.code(500).send({ success: false, error });
         }
-      );
+      }
     }
   );
 
@@ -337,49 +387,27 @@ export default async function (
       const { authorization }: any = request.headers;
       const token = authorization.slice(7);
 
-      verify(
-        token,
-        process.env.TOKEN_SECRET as string,
-        async function (
-          err: JsonWebTokenError | NotBeforeError | TokenExpiredError | null,
-          decoded: any
-        ) {
-          if (err) {
-            return reply.code(401).send({
-              success: false,
-              error: err,
-            });
-          }
+      try {
+        const { uid } = await fastify.firebase.auth().verifyIdToken(token);
+        await fastify.firebase.auth().getUser(uid);
 
-          return reply.code(200).send({
-            success: true,
-          });
-
-          // try {
-          //   client = await fastify.pg.connect();
-          //   const { rowCount } = await client.query(
-          //     SQL`SELECT id FROM users WHERE id = ${decoded.id}`
-          //   );
-
-          //   if (rowCount == 0) {
-          //     client.release();
-          //     return reply
-          //       .code(401)
-          //       .send({ success: false, error: "Unauthorized" });
-          //   } else {
-          //     const { id }: any = request.query;
-          //     await client.query(
-          //       SQL`DELETE FROM webpages WHERE user_id = ${decoded.id} AND id = ${id}`
-          //     );
-          //     client.release();
-          //     return reply.code(200).send({ success: true });
-          //   }
-          // } catch (error) {
-          //   client.release();
-          //   return reply.code(500).send({ success: false, error: err });
-          // }
+        const { id }: any = request.query;
+        await fastify.firebase
+          .firestore()
+          .collection("webpages")
+          .doc(id)
+          .delete();
+        return reply.code(200).send({ success: true });
+      } catch (error) {
+        if (error.code == "auth/user-not-found") {
+          return reply
+            .code(401)
+            .send({ success: false, error: "Unauthorized" });
+        } else {
+          console.error(error);
+          return reply.code(500).send({ success: false, error });
         }
-      );
+      }
     }
   );
 }

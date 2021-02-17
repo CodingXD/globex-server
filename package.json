@@ -24,11 +24,9 @@
     "fastify-plugin": "^3.0.0",
     "firebase-admin": "^9.5.0",
     "html-word-count": "^2.0.0",
-    "jsonwebtoken": "^8.5.1",
     "request": "^2.88.2"
   },
   "devDependencies": {
-    "@types/jsonwebtoken": "^8.5.0",
     "@types/node": "^14.14.25",
     "@types/tap": "^14.10.2",
     "concurrently": "^5.3.0",
