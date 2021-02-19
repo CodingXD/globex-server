@@ -7,7 +7,6 @@
 
 // Dependencies
 import { FastifyInstance, FastifyPluginOptions } from "fastify";
-import { URLSearchParams } from "url";
 const req = require("request");
 const wordCount = require("html-word-count");
 
