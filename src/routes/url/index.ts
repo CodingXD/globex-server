@@ -7,6 +7,7 @@
 
 // Dependencies
 import { FastifyInstance, FastifyPluginOptions } from "fastify";
+import { URLSearchParams } from "url";
 const req = require("request");
 const wordCount = require("html-word-count");
 
@@ -434,14 +435,14 @@ export default async function (
     }
   );
 
-  // Document Count
+  // Document Count and Total Wordcount
   // Method: GET
   // Description: Returns the number of document url
   // Requirements:
   //  - Header: Authorization
   //  - Body: Domain
   // Response:
-  //  - 200: Success, Count
+  //  - 200: Success, Document Count, Total Wordcount
   fastify.get(
     "/count",
     {
@@ -467,7 +468,8 @@ export default async function (
             type: "object",
             properties: {
               success: { type: "boolean" },
-              count: { type: "integer" },
+              dcount: { type: "integer" },
+              wcount: { type: "integer" },
             },
           },
         },
@@ -487,9 +489,22 @@ export default async function (
           .where("user_id", "==", uid)
           .where("domain", "==", domain)
           .get()
-          .then((snap) => {
-            console.log(snap.size);
-            return reply.code(200).send({ success: true, count: snap.size });
+          .then((snapshot) => {
+            if (snapshot.empty) {
+              return reply
+                .code(200)
+                .send({ success: true, dcount: 0, wcount: 0 });
+            } else {
+              let wordcount = 0;
+              snapshot.forEach((doc) => {
+                wordcount += parseInt(doc.data().wordcount) + 1;
+              });
+              return reply.code(200).send({
+                success: true,
+                dcount: snapshot.size,
+                wcount: wordcount,
+              });
+            }
           });
       } catch (error) {
         return reply.code(500).send({ success: false, error });
