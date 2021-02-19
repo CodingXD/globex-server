@@ -51,6 +51,7 @@ export default async function (
                 type: "object",
                 properties: {
                   domain: { type: "string" },
+                  id: { type: "string" },
                   url: { type: "string" },
                   wordcount: { type: "integer" },
                   favorite: { type: "boolean" },
@@ -84,18 +85,22 @@ export default async function (
             const URLParser = require("url");
             const domain = URLParser.parse(url).hostname;
             const wc = wordCount(body);
-            await fastify.firebase.firestore().collection("webpages").add({
-              user_id: uid,
-              domain,
-              url,
-              wordcount: wc,
-              favorite: false,
-            });
+            const res = await fastify.firebase
+              .firestore()
+              .collection("webpages")
+              .add({
+                user_id: uid,
+                domain,
+                url,
+                wordcount: wc,
+                favorite: false,
+              });
 
             return reply.code(201).send({
               success: true,
               url: {
                 domain,
+                id: res.id,
                 url,
                 wordcount: wc,
                 favorite: false,
@@ -119,6 +124,7 @@ export default async function (
   // Description: Returns the url history
   // Requirements:
   //  - Headers: Authorization
+  //  - Query: Previous Url
   // Response:
   //  - 200: Success, URL's
   fastify.get(
@@ -136,8 +142,9 @@ export default async function (
         querystring: {
           type: "object",
           properties: {
-            domain: { type: "string" },
+            domain: { type: "string", minLength: 1 },
             limit: { type: "integer", minimum: 1 },
+            url: { type: "string", minLength: 1 },
           },
           required: ["domain"],
           additionalProperties: false,
@@ -153,7 +160,7 @@ export default async function (
                   type: "object",
                   properties: {
                     url: { type: "string" },
-                    wordCount: { type: "integer" },
+                    wordcount: { type: "integer" },
                     id: { type: "string" },
                     favorite: { type: "boolean" },
                   },
@@ -171,15 +178,25 @@ export default async function (
       try {
         const { uid } = await fastify.firebase.auth().verifyIdToken(token);
         await fastify.firebase.auth().getUser(uid);
-        const { domain = "", limit = 10 }: any = request.query;
-        const snapshot = await fastify.firebase
-          .firestore()
-          .collection("webpages")
-          .where("user_id", "==", uid)
-          .where("domain", "==", domain)
-          .orderBy("url")
-          .limit(limit)
-          .get();
+        const { domain = "", limit = 10, url }: any = request.query;
+        const snapshot = url
+          ? await fastify.firebase
+              .firestore()
+              .collection("webpages")
+              .where("user_id", "==", uid)
+              .where("domain", "==", domain)
+              .orderBy("url")
+              .startAfter(url)
+              .limit(limit)
+              .get()
+          : await fastify.firebase
+              .firestore()
+              .collection("webpages")
+              .where("user_id", "==", uid)
+              .where("domain", "==", domain)
+              .orderBy("url")
+              .limit(limit)
+              .get();
         if (snapshot.empty) {
           return reply.code(200).send({ success: true, urls: [] });
         } else {
@@ -264,7 +281,13 @@ export default async function (
         } else {
           const domains: any = [];
           snapshot.forEach((doc) => domains.push(doc.data().domain));
-          return reply.code(200).send({ success: true, domains });
+          return reply.code(200).send({
+            success: true,
+            domains: domains.filter(
+              (domain: string, index: number) =>
+                domains.indexOf(domain) == index
+            ),
+          });
         }
       } catch (error) {
         if (error.code == "auth/user-not-found") {
@@ -407,6 +430,69 @@ export default async function (
           console.error(error);
           return reply.code(500).send({ success: false, error });
         }
+      }
+    }
+  );
+
+  // Document Count
+  // Method: GET
+  // Description: Returns the number of document url
+  // Requirements:
+  //  - Header: Authorization
+  //  - Body: Domain
+  // Response:
+  //  - 200: Success, Count
+  fastify.get(
+    "/count",
+    {
+      schema: {
+        headers: {
+          type: "object",
+          properties: {
+            Authorization: { type: "string", minLength: 8 },
+          },
+          required: ["Authorization"],
+          additionalProperties: false,
+        },
+        querystring: {
+          type: "object",
+          properties: {
+            domain: { type: "string", minLength: 1 },
+          },
+          required: ["domain"],
+          additionalProperties: false,
+        },
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              success: { type: "boolean" },
+              count: { type: "integer" },
+            },
+          },
+        },
+      },
+    },
+    async function (request, reply) {
+      const { authorization }: any = request.headers;
+      const token = authorization.slice(7);
+
+      try {
+        const { uid } = await fastify.firebase.auth().verifyIdToken(token);
+        await fastify.firebase.auth().getUser(uid);
+        const { domain }: any = request.query;
+        fastify.firebase
+          .firestore()
+          .collection("webpages")
+          .where("user_id", "==", uid)
+          .where("domain", "==", domain)
+          .get()
+          .then((snap) => {
+            console.log(snap.size);
+            return reply.code(200).send({ success: true, count: snap.size });
+          });
+      } catch (error) {
+        return reply.code(500).send({ success: false, error });
       }
     }
   );
